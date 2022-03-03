@@ -19,11 +19,29 @@ const HangingCompletionLabels = {
   HangingCompletion.attempted: "Attempted",
   HangingCompletion.accomplished: "Accomplished"
 };
+enum CargoGoal { low, high }
+
+class CargoShot {
+  CargoGoal goal;
+  int attempted;
+  int scored;
+
+  CargoShot({
+    required this.goal,
+    required this.attempted,
+    required this.scored,
+  });
+
+  @override
+  String toString() {
+    return '$scored/$attempted';
+  }
+}
 
 class AutoSection {
   bool taxied;
-  int cargoLower;
-  int cargoUpper;
+  CargoShot cargoLower;
+  CargoShot cargoUpper;
   ShootingDistance shootingDistance;
 
   AutoSection(
@@ -40,17 +58,19 @@ class AutoSection {
 
 class TeleopSection {
   ShootingDistance shootingDistance;
-  int cargoLower;
-  int cargoUpper;
+  CargoShot cargoLower;
+  CargoShot cargoUpper;
   HangingChoice hangingChoice;
   HangingCompletion hangingCompletion;
+  Stopwatch hangTime;
 
   TeleopSection(
       {required this.shootingDistance,
       required this.cargoLower,
       required this.cargoUpper,
       required this.hangingChoice,
-      required this.hangingCompletion});
+      required this.hangingCompletion,
+      required this.hangTime});
 }
 
 class Conditions {
@@ -78,20 +98,36 @@ class ScoutingDocument {
       required this.conditions,
       required this.comments});
 
+  static ScoutingDocument from(ScoutingDocument old) {
+    return new ScoutingDocument(
+        id: old.id,
+        team: old.team,
+        match: old.match,
+        auto: old.auto,
+        teleop: old.teleop,
+        conditions: old.conditions,
+        comments: old.comments);
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'id': this.id,
       'team': this.team,
       'match': this.match,
       'autoTaxied': this.auto.taxied ? 1 : 0,
-      'autoCargoLower': this.auto.cargoLower,
-      'autoCargoUpper': this.auto.cargoUpper,
+      'autoCargoLowerAttempts': this.auto.cargoLower.attempted,
+      'autoCargoLowerScored': this.auto.cargoLower.scored,
+      'autoCargoUpperAttempts': this.auto.cargoUpper.attempted,
+      'autoCargoUpperScored': this.auto.cargoUpper.scored,
       'autoShootingDistance': this.auto.shootingDistance.index,
       'teleShootingDistance': this.teleop.shootingDistance.index,
-      'teleCargoLower': this.teleop.cargoLower,
-      'teleCargoupper': this.teleop.cargoUpper,
+      'teleCargoLowerAttempts': this.teleop.cargoLower.attempted,
+      'teleCargoLowerScored': this.teleop.cargoLower.scored,
+      'teleCargoUpperAttempts': this.teleop.cargoUpper.attempted,
+      'teleCargoUpperScored': this.teleop.cargoUpper.scored,
       'teleHangingChoice': this.teleop.hangingChoice.index,
       'teleHangingCompletion': this.teleop.hangingCompletion.index,
+      'teleHangingTime': this.teleop.hangTime.elapsedMilliseconds,
       'broke': this.conditions.broke ? 1 : 0,
       'disconnect': this.conditions.disconnect ? 1 : 0,
       'comments': this.comments
