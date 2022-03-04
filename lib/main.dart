@@ -1,246 +1,196 @@
-import 'dart:io';
-
-import 'package:csv/csv.dart' as csv;
-import 'package:flutter/material.dart';
+import 'package:birdseye/scouting.dart';
 import 'package:filesystem_picker/filesystem_picker.dart';
+import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-import 'document.dart';
+import 'database.dart';
+import 'enums.dart';
 
-final dbProvider = StateNotifierProvider<DocumentDatabase, Database>((ref) {
-  return DocumentDatabase();
+final dbProvider = StateNotifierProvider<DatabaseHandler, Database>((ref) {
+  return DatabaseHandler();
 });
 
-class DocumentDatabase extends StateNotifier<Database> {
-  DocumentDatabase() : super(Database());
+class DatabaseHandler extends StateNotifier<Database> {
+  DatabaseHandler() : super(Database());
 
-  void setSavingPath(String path) {
-    Database newDB = Database.from(state);
-    newDB.savingPath = path;
-    newDB.loadDatabase();
-    state = newDB;
-  }
-}
-
-class Database {
-  String databaseName = "birdseye";
-
-  List<ScoutingDocument>? documents;
-  String? savingPath;
-
-  Database(
-      {this.databaseName = "birdseye", this.documents, this.savingPath = ""}) {}
-
-  static Database from(Database old) {
-    return new Database(
-        databaseName: old.databaseName,
-        documents: old.documents,
-        savingPath: old.savingPath);
+  void openDatabase(String path) {
+    Database db = Database(dir: path);
+    db.searchRoot();
+    state = db;
   }
 
-  void loadDatabase() {
-    final sp = this.savingPath;
-    if (sp != null) {
-      final dir = sp.endsWith(this.databaseName)
-          ? Directory(sp)
-          : new Directory(path.join(sp, this.databaseName));
-
-      if (!dir.existsSync()) {
-        dir.createSync(recursive: true);
-      }
-      final files = dir.listSync();
-      for (FileSystemEntity file in files) {
-        if (file.path.endsWith(".csv")) {
-          File f = File(file.path);
-          String data = f.readAsStringSync();
-        }
-      }
+  void saveDocument(ScoutingDocument doc) {
+    Database db = Database.from(state);
+    //If team doest exist, create it.
+    Iterable<TeamDocument> teamExists =
+        db.teams.where((el) => el.team == doc.team);
+    if (teamExists.isEmpty) {
+      TeamDocument newTeam = TeamDocument(team: doc.team, docs: [doc]);
+      db.teams.add(newTeam);
+      state = db;
+      return;
     }
+    //If team exists, locate it;
+    TeamDocument team = teamExists.first;
+    int location = db.teams.indexOf(team);
+    //Does team have a document of this match?
+    Iterable<ScoutingDocument> docExists =
+        team.docs.where((el) => el.match == doc.match);
+
+    //If doc doesn't exist, create it.
+    if (docExists.isEmpty) {
+      team.docs.add(doc);
+    } else {
+      //If it does, overwrite it.
+      int docLoc = team.docs.indexOf(docExists.first);
+      team.docs[docLoc] = doc;
+    }
+    //Over write team data
+    db.teams[location] = team;
+    db.saveToDisk();
+    state = db;
   }
 }
 
-final currentDocumentProvider =
-    StateNotifierProvider<Document, ScoutingDocument>((ref) {
-  return Document();
+final documentProvider =
+    StateNotifierProvider<DocumentHandler, ScoutingDocument>((ref) {
+  return DocumentHandler();
 });
 
-class Document extends StateNotifier<ScoutingDocument> {
-  Document()
-      : super(ScoutingDocument(
-            id: 1,
-            team: 0,
-            match: 0,
-            auto: AutoSection(
-                taxied: false,
-                cargoLower:
-                    CargoShot(goal: CargoGoal.low, attempted: 0, scored: 0),
-                cargoUpper:
-                    CargoShot(goal: CargoGoal.high, attempted: 0, scored: 0),
-                shootingDistance: ShootingDistance.varies),
-            teleop: TeleopSection(
-                shootingDistance: ShootingDistance.varies,
-                cargoLower:
-                    CargoShot(goal: CargoGoal.low, attempted: 0, scored: 0),
-                cargoUpper:
-                    CargoShot(goal: CargoGoal.high, attempted: 0, scored: 0),
-                hangingChoice: HangingChoice.low,
-                hangingCompletion: HangingCompletion.noAttempt,
-                hangTime: Stopwatch()),
-            conditions: Conditions(broke: false, disconnect: false),
-            comments: ""));
+class DocumentHandler extends StateNotifier<ScoutingDocument> {
+  DocumentHandler() : super(ScoutingDocument());
 
-  void setTaxied(bool value) {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.auto.taxied = value;
-    state = newDoc;
+  void createNewDocument() {
+    state = new ScoutingDocument();
+  }
+
+  void setDocument(ScoutingDocument doc) {
+    state = doc;
+  }
+
+  void setTeam(String value) {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.team = value;
+    state = doc;
+  }
+
+  void setMatch(String value) {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.match = value;
+    state = doc;
+  }
+
+  void setAutoTaxied(bool value) {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.auto.taxied = value;
+    state = doc;
   }
 
   void setAutoShootingDistance(ShootingDistance value) {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.auto.shootingDistance = value;
-    state = newDoc;
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.auto.distance = value;
+    state = doc;
   }
 
-  void addAutoScoredLower() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.auto.cargoLower.attempted++;
-    newDoc.auto.cargoLower.scored++;
-    state = newDoc;
+  void incrementAutoLowerScored() {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.auto.lower.scored++;
+    state = doc;
   }
 
-  void addAutoAttemptedLower() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.auto.cargoLower.attempted++;
-    state = newDoc;
+  void incrementAutoLowerAttempt() {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.auto.lower.attempted++;
+    state = doc;
   }
 
-  void removeAutoAttemptLower() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    if (newDoc.auto.cargoLower.attempted > 0) {
-      newDoc.auto.cargoLower.attempted--;
-    }
-    if (newDoc.auto.cargoLower.scored > 0) {
-      newDoc.auto.cargoLower.scored--;
-    }
-    state = newDoc;
+  void incrementAutoUpperScored() {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.auto.upper.scored++;
+    state = doc;
   }
 
-  void addAutoScoredUpper() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.auto.cargoUpper.attempted++;
-    newDoc.auto.cargoUpper.scored++;
-    state = newDoc;
+  void incrementAutoUpperAttempt() {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.auto.upper.attempted++;
+    state = doc;
   }
 
-  void addAutoAttemptedUpper() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.auto.cargoUpper.attempted++;
-    state = newDoc;
+  void incrementTeleopLowerScored() {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.teleop.lower.scored++;
+    state = doc;
   }
 
-  void removeAutoAttemptUpper() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    if (newDoc.auto.cargoUpper.attempted > 0) {
-      newDoc.auto.cargoUpper.attempted--;
-    }
-    if (newDoc.auto.cargoUpper.scored > 0) {
-      newDoc.auto.cargoUpper.scored--;
-    }
-    state = newDoc;
+  void incrementTeleopLowerAttempt() {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.teleop.lower.attempted++;
+    state = doc;
   }
 
-  //=======================
+  void incrementTeleopUpperScored() {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.teleop.upper.scored++;
+    state = doc;
+  }
+
+  void incrementTeleopUpperAttempt() {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.teleop.upper.attempted++;
+    state = doc;
+  }
 
   void setTeleopShootingDistance(ShootingDistance value) {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.teleop.shootingDistance = value;
-    state = newDoc;
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.teleop.distance = value;
+    state = doc;
   }
 
-  void addTeleopScoredLower() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.teleop.cargoLower.attempted++;
-    newDoc.teleop.cargoLower.scored++;
-    state = newDoc;
+  void setTeleopHangSelection(HangingSelection value) {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.teleop.hang.selection = value;
+    state = doc;
   }
 
-  void addTeleopAttemptedLower() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.teleop.cargoLower.attempted++;
-    state = newDoc;
+  void setTeleopHangCompletion(HangingCompletion value) {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.teleop.hang.completion = value;
+    state = doc;
   }
 
-  void removeTeleopAttemptLower() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    if (newDoc.teleop.cargoLower.attempted > 0) {
-      newDoc.teleop.cargoLower.attempted--;
-    }
-    if (newDoc.teleop.cargoLower.scored > 0) {
-      newDoc.teleop.cargoLower.scored--;
-    }
-    state = newDoc;
+  void startTeleopHangTimer() {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.teleop.hang.stopwatch = Stopwatch();
+    doc.teleop.hang.stopwatch?.start();
+    state = doc;
   }
 
-  void addTeleopScoredUpper() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.teleop.cargoUpper.attempted++;
-    newDoc.teleop.cargoUpper.scored++;
-    state = newDoc;
+  void stopTeleopHangTimer() {
+    state.teleop.hang.stopwatch?.stop();
+    state.teleop.hang.time = state.teleop.hang.stopwatch!.elapsedMilliseconds;
+    state.teleop.hang.stopwatch?.reset();
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    state = doc;
   }
 
-  void addTeleopAttemptedUpper() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.teleop.cargoUpper.attempted++;
-    state = newDoc;
-  }
-
-  void removeTeleopAttemptUpper() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    if (newDoc.teleop.cargoUpper.attempted > 0) {
-      newDoc.teleop.cargoUpper.attempted--;
-    }
-    if (newDoc.teleop.cargoUpper.scored > 0) {
-      newDoc.teleop.cargoUpper.scored--;
-    }
-    state = newDoc;
-  }
-
-  void setHangChoice(HangingChoice value) {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.teleop.hangingChoice = value;
-    state = newDoc;
-  }
-
-  void setHangCompletion(HangingCompletion value) {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.teleop.hangingCompletion = value;
-    state = newDoc;
-  }
-
-  void setBrokeDown(bool value) {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.conditions.broke = value;
-    state = newDoc;
+  void setBroke(bool value) {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.broke = value;
+    state = doc;
   }
 
   void setDisconnected(bool value) {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.conditions.disconnect = value;
-    state = newDoc;
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.disconnected = value;
+    state = doc;
   }
 
-  void startTimer() {
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    newDoc.teleop.hangTime.start();
-    state = newDoc;
-  }
-
-  void stopTimer() {
-    state.teleop.hangTime.stop();
-    ScoutingDocument newDoc = ScoutingDocument.from(state);
-    state = newDoc;
+  void setComments(String value) {
+    ScoutingDocument doc = ScoutingDocument.from(state);
+    doc.comments = value;
+    state = doc;
   }
 }
 
@@ -259,51 +209,135 @@ class DocumentList extends ConsumerWidget {
   const DocumentList({Key? key}) : super(key: key);
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    Database db = ref.watch(dbProvider);
+    final db = ref.watch(dbProvider);
     return Scaffold(
         appBar: AppBar(title: const Center(child: Text('Birdseye'))),
-        body: Center(
-            child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-              Text('No Folder Selected'),
-              ElevatedButton(
-                  onPressed: () async {
-                    String? path = await FilesystemPicker.open(
-                        title: 'Save Folder',
-                        context: context,
-                        rootDirectory: await getApplicationDocumentsDirectory(),
-                        fsType: FilesystemType.folder,
-                        pickText: 'Save documents to this folder');
-                    if (path != null) {
-                      ref.read(dbProvider.notifier).setSavingPath(path);
-                    }
-                  },
-                  child: const Text('Select Folder'))
-            ])),
+        body: (() {
+          if (db.teams.length > 0) {
+            return ListView(
+              children: List.generate(db.teams.length, (teamI) {
+                return Container(
+                    padding: EdgeInsets.all(20),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Team #${db.teams[teamI].team}',
+                              style: Theme.of(context).textTheme.headline4),
+                          ...List.generate(db.teams[teamI].docs.length, (docI) {
+                            return Card(
+                                child: InkWell(
+                                    onTap: () {
+                                      ref
+                                          .read(documentProvider.notifier)
+                                          .setDocument(
+                                              db.teams[teamI].docs[docI]);
+                                      Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                              builder: (context) =>
+                                                  DocumentEditor()));
+                                    },
+                                    child: SizedBox(
+                                        height: 50,
+                                        child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.center,
+                                            children: [
+                                              Text(
+                                                  'Match #${db.teams[teamI].docs[docI].match}',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .labelLarge)
+                                            ]))));
+                          })
+                        ]));
+              }),
+            );
+          } else {
+            if (db.rootDir != null) {
+              if (db.rootDir!.existsSync()) {
+                return Center(
+                  child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                            padding: EdgeInsets.all(20),
+                            child: Text("No Documents Found")),
+                        ElevatedButton(
+                            onPressed: () {
+                              ref
+                                  .read(documentProvider.notifier)
+                                  .createNewDocument();
+                              Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (context) => DocumentEditor()));
+                            },
+                            child: const Text("Create First Document"))
+                      ]),
+                );
+              }
+            } else {
+              return Center(
+                child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                          padding: EdgeInsets.all(20),
+                          child: Text("No Save Folder Selected")),
+                      ElevatedButton(
+                          onPressed: () async {
+                            String? selectedPath = await FilesystemPicker.open(
+                                title: 'Save Folder',
+                                context: context,
+                                rootDirectory:
+                                    await getApplicationDocumentsDirectory(),
+                                fsType: FilesystemType.folder,
+                                pickText: 'Save documents to this folder');
+                            if (selectedPath != null) {
+                              final pref =
+                                  await SharedPreferences.getInstance();
+                              await pref.setString('saveDir', selectedPath);
+                              ref
+                                  .read(dbProvider.notifier)
+                                  .openDatabase(selectedPath);
+                            }
+                          },
+                          child: const Text("Select Folder"))
+                    ]),
+              );
+            }
+          }
+        })(),
         floatingActionButton: (() {
-          // if (folder.length > 0) {
-          //   return FloatingActionButton(
-          //       onPressed: () {
-          //         Navigator.push(
-          //             context,
-          //             MaterialPageRoute(
-          //                 builder: (context) => DocumentEditor()));
-          //       },
-          //       child: const Icon(Icons.add));
-          // }
+          if (db.rootDir != null) {
+            if (db.rootDir!.existsSync()) {
+              return FloatingActionButton(
+                  onPressed: () {
+                    ref.read(documentProvider.notifier).createNewDocument();
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => DocumentEditor()));
+                  },
+                  child: const Icon(Icons.add));
+            }
+          }
         })());
   }
 }
 
 class DocumentEditor extends ConsumerWidget {
   DocumentEditor({Key? key}) : super(key: key);
-  final TextEditingController _matchController = TextEditingController();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final doc = ref.watch(currentDocumentProvider);
+    final doc = ref.watch(documentProvider);
+    final _matchController = TextEditingController(text: doc.match);
+    final _teamController = TextEditingController(text: doc.team);
+    final _commentsController = TextEditingController(text: doc.comments);
     return Scaffold(
         appBar: AppBar(title: const Center(child: Text('New Document'))),
         body: ListView(children: [
@@ -318,11 +352,7 @@ class DocumentEditor extends ConsumerWidget {
                     child: Container(
                         padding: EdgeInsets.all(20),
                         child: TextField(
-                          onChanged: (value) {
-                            if (value.length > 0) {
-                              doc.match = int.parse(value);
-                            }
-                          },
+                          controller: _matchController,
                           keyboardType: TextInputType.number,
                           decoration: InputDecoration(labelText: 'Match #'),
                         ))),
@@ -330,11 +360,7 @@ class DocumentEditor extends ConsumerWidget {
                     child: Container(
                         padding: EdgeInsets.all(20),
                         child: TextField(
-                            onChanged: (value) {
-                              if (value.length > 0) {
-                                doc.team = int.parse(value);
-                              }
-                            },
+                            controller: _teamController,
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(labelText: 'Team #')))),
               ],
@@ -353,14 +379,23 @@ class DocumentEditor extends ConsumerWidget {
                             value: doc.auto.taxied,
                             onChanged: (value) {
                               ref
-                                  .read(currentDocumentProvider.notifier)
-                                  .setTaxied(value);
+                                  .read(documentProvider.notifier)
+                                  .setTeam(_teamController.text);
+                              ref
+                                  .read(documentProvider.notifier)
+                                  .setMatch(_matchController.text);
+                              ref
+                                  .read(documentProvider.notifier)
+                                  .setComments(_commentsController.text);
+                              ref
+                                  .read(documentProvider.notifier)
+                                  .setAutoTaxied(value);
                             })
                       ]),
                       Column(children: [
                         Text('Shooting Distance'),
                         DropdownButton<ShootingDistance>(
-                          value: doc.auto.shootingDistance,
+                          value: doc.auto.distance,
                           items: <ShootingDistance>[...ShootingDistance.values]
                               .map<DropdownMenuItem<ShootingDistance>>(
                                   (ShootingDistance value) {
@@ -372,11 +407,19 @@ class DocumentEditor extends ConsumerWidget {
                                 value: value);
                           }).toList(),
                           onChanged: (value) {
-                            if (value != null) {
+                            ref
+                                .read(documentProvider.notifier)
+                                .setTeam(_teamController.text);
+                            ref
+                                .read(documentProvider.notifier)
+                                .setMatch(_matchController.text);
+                            ref
+                                .read(documentProvider.notifier)
+                                .setComments(_commentsController.text);
+                            if (value != null)
                               ref
-                                  .read(currentDocumentProvider.notifier)
+                                  .read(documentProvider.notifier)
                                   .setAutoShootingDistance(value);
-                            }
                           },
                         )
                       ])
@@ -390,36 +433,73 @@ class DocumentEditor extends ConsumerWidget {
                         Text('Lower Cargo Scored'),
                         Row(
                           children: [
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .removeAutoAttemptLower();
-                                },
-                                child: const Text('-')),
                             SizedBox(
                                 width: 100,
                                 child: TextField(
                                   controller: TextEditingController(
-                                      text: doc.auto.cargoLower.toString()),
+                                      text: '${doc.auto.lower.toString()}'),
                                   textAlign: TextAlign.center,
                                   keyboardType: TextInputType.number,
-                                  decoration: InputDecoration(),
+                                  enabled: false,
                                 )),
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .addAutoScoredLower();
-                                },
-                                child: const Text('Scored')),
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .addAutoAttemptedLower();
-                                },
-                                child: const Text('Attempt'))
+                            Container(
+                                padding: EdgeInsets.all(10),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 5),
+                                        child: OutlinedButton(
+                                            onPressed: () {
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setTeam(
+                                                      _teamController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setMatch(
+                                                      _matchController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setComments(
+                                                      _commentsController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .incrementAutoLowerScored();
+                                            },
+                                            child: const Text('Scored'))),
+                                    Container(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 5),
+                                        child: OutlinedButton(
+                                            onPressed: () {
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setTeam(
+                                                      _teamController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setMatch(
+                                                      _matchController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setComments(
+                                                      _commentsController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .incrementAutoLowerAttempt();
+                                            },
+                                            child: const Text('Attempt'))),
+                                  ],
+                                ))
                           ],
                         )
                       ]),
@@ -427,36 +507,74 @@ class DocumentEditor extends ConsumerWidget {
                         Text('Upper Cargo Scored'),
                         Row(
                           children: [
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .removeAutoAttemptUpper();
-                                },
-                                child: const Text('-')),
                             SizedBox(
                                 width: 100,
                                 child: TextField(
                                   controller: TextEditingController(
-                                      text: doc.auto.cargoUpper.toString()),
+                                      text: '${doc.auto.upper.toString()}'),
                                   textAlign: TextAlign.center,
                                   keyboardType: TextInputType.number,
                                   decoration: InputDecoration(),
+                                  enabled: false,
                                 )),
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .addAutoScoredUpper();
-                                },
-                                child: const Text('Scored')),
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .addAutoAttemptedUpper();
-                                },
-                                child: const Text('Attempt'))
+                            Container(
+                                padding: EdgeInsets.all(10),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 5),
+                                        child: OutlinedButton(
+                                            onPressed: () {
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setTeam(
+                                                      _teamController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setMatch(
+                                                      _matchController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setComments(
+                                                      _commentsController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .incrementAutoUpperScored();
+                                            },
+                                            child: const Text('Scored'))),
+                                    Container(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 5),
+                                        child: OutlinedButton(
+                                            onPressed: () {
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setTeam(
+                                                      _teamController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setMatch(
+                                                      _matchController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setComments(
+                                                      _commentsController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .incrementAutoUpperAttempt();
+                                            },
+                                            child: const Text('Attempt'))),
+                                  ],
+                                ))
                           ],
                         )
                       ]),
@@ -474,36 +592,74 @@ class DocumentEditor extends ConsumerWidget {
                         Text('Lower Cargo Scored'),
                         Row(
                           children: [
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .removeTeleopAttemptLower();
-                                },
-                                child: const Text('-')),
                             SizedBox(
                                 width: 100,
                                 child: TextField(
                                   controller: TextEditingController(
-                                      text: doc.teleop.cargoLower.toString()),
+                                      text: '${doc.teleop.lower.toString()}'),
                                   textAlign: TextAlign.center,
                                   keyboardType: TextInputType.number,
                                   decoration: InputDecoration(),
+                                  enabled: false,
                                 )),
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .addTeleopScoredLower();
-                                },
-                                child: const Text('Scored')),
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .addTeleopAttemptedLower();
-                                },
-                                child: const Text('Attempt'))
+                            Container(
+                                padding: EdgeInsets.all(10),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 5),
+                                        child: OutlinedButton(
+                                            onPressed: () {
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setTeam(
+                                                      _teamController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setMatch(
+                                                      _matchController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setComments(
+                                                      _commentsController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .incrementTeleopLowerScored();
+                                            },
+                                            child: const Text('Scored'))),
+                                    Container(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 5),
+                                        child: OutlinedButton(
+                                            onPressed: () {
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setTeam(
+                                                      _teamController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setMatch(
+                                                      _matchController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setComments(
+                                                      _commentsController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .incrementTeleopLowerAttempt();
+                                            },
+                                            child: const Text('Attempt'))),
+                                  ],
+                                ))
                           ],
                         )
                       ]),
@@ -511,36 +667,74 @@ class DocumentEditor extends ConsumerWidget {
                         Text('Upper Cargo Scored'),
                         Row(
                           children: [
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .removeTeleopAttemptUpper();
-                                },
-                                child: const Text('-')),
                             SizedBox(
                                 width: 100,
                                 child: TextField(
                                   controller: TextEditingController(
-                                      text: doc.teleop.cargoUpper.toString()),
+                                      text: '${doc.teleop.upper.toString()}'),
                                   textAlign: TextAlign.center,
                                   keyboardType: TextInputType.number,
                                   decoration: InputDecoration(),
+                                  enabled: false,
                                 )),
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .addTeleopScoredUpper();
-                                },
-                                child: const Text('Scored')),
-                            OutlinedButton(
-                                onPressed: () {
-                                  ref
-                                      .read(currentDocumentProvider.notifier)
-                                      .addTeleopAttemptedUpper();
-                                },
-                                child: const Text('Attempt'))
+                            Container(
+                                padding: EdgeInsets.all(10),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 5),
+                                        child: OutlinedButton(
+                                            onPressed: () {
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setTeam(
+                                                      _teamController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setMatch(
+                                                      _matchController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setComments(
+                                                      _commentsController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .incrementTeleopUpperScored();
+                                            },
+                                            child: const Text('Scored'))),
+                                    Container(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 5),
+                                        child: OutlinedButton(
+                                            onPressed: () {
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setTeam(
+                                                      _teamController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setMatch(
+                                                      _matchController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .setComments(
+                                                      _commentsController.text);
+                                              ref
+                                                  .read(
+                                                      documentProvider.notifier)
+                                                  .incrementTeleopUpperAttempt();
+                                            },
+                                            child: const Text('Attempt'))),
+                                  ],
+                                ))
                           ],
                         )
                       ]),
@@ -551,7 +745,7 @@ class DocumentEditor extends ConsumerWidget {
               child: Column(children: [
                 Text('Shooting Distance'),
                 DropdownButton<ShootingDistance>(
-                  value: doc.teleop.shootingDistance,
+                  value: doc.teleop.distance,
                   items: <ShootingDistance>[...ShootingDistance.values]
                       .map<DropdownMenuItem<ShootingDistance>>(
                           (ShootingDistance value) {
@@ -562,11 +756,19 @@ class DocumentEditor extends ConsumerWidget {
                         value: value);
                   }).toList(),
                   onChanged: (value) {
-                    if (value != null) {
+                    ref
+                        .read(documentProvider.notifier)
+                        .setTeam(_teamController.text);
+                    ref
+                        .read(documentProvider.notifier)
+                        .setMatch(_matchController.text);
+                    ref
+                        .read(documentProvider.notifier)
+                        .setComments(_commentsController.text);
+                    if (value != null)
                       ref
-                          .read(currentDocumentProvider.notifier)
+                          .read(documentProvider.notifier)
                           .setTeleopShootingDistance(value);
-                    }
                   },
                 )
               ]),
@@ -577,32 +779,40 @@ class DocumentEditor extends ConsumerWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
                       Column(children: [
-                        Text('Hang Choice'),
-                        DropdownButton<HangingChoice>(
-                          value: doc.teleop.hangingChoice,
-                          items: <HangingChoice>[...HangingChoice.values]
-                              .map<DropdownMenuItem<HangingChoice>>(
-                                  (HangingChoice value) {
-                            return DropdownMenuItem<HangingChoice>(
-                                child: HangingChoiceLabels[value] == null
+                        Text('Hanging Selection'),
+                        DropdownButton<HangingSelection>(
+                          value: doc.teleop.hang.selection,
+                          items: <HangingSelection>[...HangingSelection.values]
+                              .map<DropdownMenuItem<HangingSelection>>(
+                                  (HangingSelection value) {
+                            return DropdownMenuItem<HangingSelection>(
+                                child: HangingSelectionLabels[value] == null
                                     ? Text(value.name)
-                                    : Text(
-                                        HangingChoiceLabels[value].toString()),
+                                    : Text(HangingSelectionLabels[value]
+                                        .toString()),
                                 value: value);
                           }).toList(),
                           onChanged: (value) {
-                            if (value != null) {
+                            ref
+                                .read(documentProvider.notifier)
+                                .setTeam(_teamController.text);
+                            ref
+                                .read(documentProvider.notifier)
+                                .setMatch(_matchController.text);
+                            ref
+                                .read(documentProvider.notifier)
+                                .setComments(_commentsController.text);
+                            if (value != null)
                               ref
-                                  .read(currentDocumentProvider.notifier)
-                                  .setHangChoice(value);
-                            }
+                                  .read(documentProvider.notifier)
+                                  .setTeleopHangSelection(value);
                           },
                         )
                       ]),
                       Column(children: [
-                        Text('Hang Completed'),
+                        Text('Hanging Completion'),
                         DropdownButton<HangingCompletion>(
-                          value: doc.teleop.hangingCompletion,
+                          value: doc.teleop.hang.completion,
                           items: <HangingCompletion>[
                             ...HangingCompletion.values
                           ].map<DropdownMenuItem<HangingCompletion>>(
@@ -615,48 +825,75 @@ class DocumentEditor extends ConsumerWidget {
                                 value: value);
                           }).toList(),
                           onChanged: (value) {
-                            if (value != null) {
+                            ref
+                                .read(documentProvider.notifier)
+                                .setTeam(_teamController.text);
+                            ref
+                                .read(documentProvider.notifier)
+                                .setMatch(_matchController.text);
+                            ref
+                                .read(documentProvider.notifier)
+                                .setComments(_commentsController.text);
+                            if (value != null)
                               ref
-                                  .read(currentDocumentProvider.notifier)
-                                  .setHangCompletion(value);
-                            }
+                                  .read(documentProvider.notifier)
+                                  .setTeleopHangCompletion(value);
                           },
                         )
                       ]),
                       Column(
                         children: [
-                          Text('Hang Time'),
+                          Text('Hanging Timer'),
                           Row(
                             children: [
-                              OutlinedButton.icon(
-                                  onPressed: () {
-                                    if (doc.teleop.hangTime.isRunning) {
-                                      ref
-                                          .read(
-                                              currentDocumentProvider.notifier)
-                                          .stopTimer();
-                                    } else {
-                                      ref
-                                          .read(
-                                              currentDocumentProvider.notifier)
-                                          .startTimer();
-                                    }
-                                  },
-                                  icon: Icon(doc.teleop.hangTime.isRunning
-                                      ? Icons.stop
-                                      : (doc.teleop.hangTime
-                                                  .elapsedMilliseconds >
-                                              0
-                                          ? Icons.refresh
-                                          : Icons.play_arrow)),
-                                  label: doc.teleop.hangTime.isRunning
-                                      ? const Text('Timer Running')
-                                      : (doc.teleop
-                                                  .hangTime.elapsedMilliseconds >
-                                              0
-                                          ? Text(doc.teleop.hangTime.elapsed
-                                              .toString())
-                                          : Text('Start Timer'))),
+                              OutlinedButton.icon(onPressed: () {
+                                ref
+                                    .read(documentProvider.notifier)
+                                    .setTeam(_teamController.text);
+                                ref
+                                    .read(documentProvider.notifier)
+                                    .setMatch(_matchController.text);
+                                ref
+                                    .read(documentProvider.notifier)
+                                    .setComments(_commentsController.text);
+                                if (doc.teleop.hang.stopwatch != null) {
+                                  if (doc.teleop.hang.stopwatch!.isRunning) {
+                                    ref
+                                        .read(documentProvider.notifier)
+                                        .stopTeleopHangTimer();
+                                    return;
+                                  }
+                                  ref
+                                      .read(documentProvider.notifier)
+                                      .startTeleopHangTimer();
+                                  return;
+                                }
+                                ref
+                                    .read(documentProvider.notifier)
+                                    .startTeleopHangTimer();
+                              }, icon: Icon((() {
+                                if (doc.teleop.hang.stopwatch != null) {
+                                  if (doc.teleop.hang.stopwatch!.isRunning) {
+                                    return Icons.stop;
+                                  }
+                                  if (doc.teleop.hang.time > 0) {
+                                    return Icons.refresh;
+                                  }
+                                  return Icons.play_arrow;
+                                }
+                                return Icons.play_arrow;
+                              })()), label: Text((() {
+                                if (doc.teleop.hang.stopwatch != null) {
+                                  if (doc.teleop.hang.stopwatch!.isRunning) {
+                                    return "Running";
+                                  }
+                                  if (doc.teleop.hang.time > 0) {
+                                    return doc.teleop.hang.timeString();
+                                  }
+                                  return "Start Timer";
+                                }
+                                return "Start Timer";
+                              })())),
                             ],
                           )
                         ],
@@ -675,11 +912,20 @@ class DocumentEditor extends ConsumerWidget {
                         children: [
                           Text('Broke Down'),
                           Switch(
-                              value: doc.conditions.broke,
+                              value: doc.broke,
                               onChanged: (value) {
                                 ref
-                                    .read(currentDocumentProvider.notifier)
-                                    .setBrokeDown(value);
+                                    .read(documentProvider.notifier)
+                                    .setTeam(_teamController.text);
+                                ref
+                                    .read(documentProvider.notifier)
+                                    .setMatch(_matchController.text);
+                                ref
+                                    .read(documentProvider.notifier)
+                                    .setComments(_commentsController.text);
+                                ref
+                                    .read(documentProvider.notifier)
+                                    .setBroke(value);
                               })
                         ],
                       ),
@@ -687,10 +933,19 @@ class DocumentEditor extends ConsumerWidget {
                         children: [
                           Text('Disconnected'),
                           Switch(
-                              value: doc.conditions.disconnect,
+                              value: doc.disconnected,
                               onChanged: (value) {
                                 ref
-                                    .read(currentDocumentProvider.notifier)
+                                    .read(documentProvider.notifier)
+                                    .setTeam(_teamController.text);
+                                ref
+                                    .read(documentProvider.notifier)
+                                    .setMatch(_matchController.text);
+                                ref
+                                    .read(documentProvider.notifier)
+                                    .setComments(_commentsController.text);
+                                ref
+                                    .read(documentProvider.notifier)
                                     .setDisconnected(value);
                               })
                         ],
@@ -699,20 +954,21 @@ class DocumentEditor extends ConsumerWidget {
             Container(
                 padding: EdgeInsets.all(20),
                 child: TextField(
-                  controller: TextEditingController(text: doc.comments),
+                  controller: _commentsController,
                   keyboardType: TextInputType.multiline,
                   maxLines: null,
                   decoration: InputDecoration(
                     labelText: 'Comments',
                   ),
-                  onChanged: (value) {
-                    doc.comments = value;
-                  },
                 ))
           ]),
         ]),
         floatingActionButton: FloatingActionButton(
-            onPressed: () {
+            onPressed: () async {
+              doc.team = _teamController.text;
+              doc.match = _matchController.text;
+              doc.comments = _commentsController.text;
+              ref.read(dbProvider.notifier).saveDocument(doc);
               Navigator.pop(context);
             },
             child: const Icon(Icons.save)));
